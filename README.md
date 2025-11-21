@@ -90,3 +90,47 @@ sudo ./ebpf-traffic-exporter --iface eth0 --addr :9091
 network_traffic_bytes_total{direction="inbound",dst_ip="192.168.1.5",ip_type="private",src_ip="1.1.1.1"} 1234
 network_traffic_bytes_total{direction="outbound",dst_ip="8.8.8.8",ip_type="public",src_ip="192.168.1.5"} 5678
 ```
+
+## PromQL 查询示例
+
+以下是一些常用的 PromQL 查询语句，可用于 Grafana 面板配置：
+
+### 1. 总流量速率 (Bytes/s)
+
+查看整体的入站和出站流量速率：
+
+```promql
+sum by (direction) (rate(network_traffic_bytes_total[1m]))
+```
+
+### 2. Top 10 流量来源 IP (入站)
+
+查看哪些 IP 正在向本机发送大量数据：
+
+```promql
+topk(10, sum by (src_ip) (rate(network_traffic_bytes_total{direction="inbound"}[1m])))
+```
+
+### 3. Top 10 流量目标 IP (出站)
+
+查看本机正在向哪些 IP 发送大量数据：
+
+```promql
+topk(10, sum by (dst_ip) (rate(network_traffic_bytes_total{direction="outbound"}[1m])))
+```
+
+### 4. 公网 vs 内网流量占比
+
+查看公网和内网流量的分布情况：
+
+```promql
+sum by (ip_type) (rate(network_traffic_bytes_total[1m]))
+```
+
+### 5. 特定 IP 的流量趋势
+
+查看某个特定 IP (例如 `1.1.1.1`) 的流量变化：
+
+```promql
+sum(rate(network_traffic_bytes_total{src_ip="1.1.1.1"}[1m])) + sum(rate(network_traffic_bytes_total{dst_ip="1.1.1.1"}[1m]))
+```

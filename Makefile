@@ -6,7 +6,7 @@ all: build
 
 .PHONY: build
 build: generate
-	go build -o ebpf-traffic-exporter .
+	go build -o ebpf-traffic-exporter cmd/exporter/main.go
 
 .PHONY: generate
 generate: vmlinux.h
@@ -17,4 +17,4 @@ vmlinux.h:
 
 .PHONY: clean
 clean:
-	rm -f ebpf-traffic-exporter vmlinux.h bpf_bpfel.go bpf_bpfeb.go bpf_bpfel.o bpf_bpfeb.o
+	rm -f ebpf-traffic-exporter vmlinux.h internal/ebpf/Bpf_bpfel.go internal/ebpf/Bpf_bpfeb.go internal/ebpf/Bpf_bpfel.o internal/ebpf/Bpf_bpfeb.o

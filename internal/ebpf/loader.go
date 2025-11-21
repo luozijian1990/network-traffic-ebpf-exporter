@@ -18,7 +18,7 @@ func LoadObjects() (*BpfObjects, error) {
 	}
 
 	objs := BpfObjects{}
-	if err := loadBpfObjects(&objs, nil); err != nil {
+	if err := LoadBpfObjects(&objs, nil); err != nil {
 		return nil, fmt.Errorf("loading objects: %v", err)
 	}
 	return &objs, nil

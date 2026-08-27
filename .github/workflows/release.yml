@@ -1,0 +1,235 @@
+name: Release dual exporters
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Release version, for example v0.1.0
+        required: true
+        type: string
+      conntrack_ref:
+        description: Conntrack branch, tag, or full commit SHA
+        required: true
+        default: conntrack
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ inputs.version }}
+  cancel-in-progress: false
+
+jobs:
+  resolve-sources:
+    name: Resolve source revisions
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      main_sha: ${{ steps.main-sha.outputs.sha }}
+      conntrack_sha: ${{ steps.conntrack-sha.outputs.sha }}
+    steps:
+      - name: Validate release request
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          if [[ "${GITHUB_REF}" != "refs/heads/main" ]]; then
+            echo "Run this workflow from the main branch." >&2
+            exit 1
+          fi
+          if [[ ! "${RELEASE_VERSION}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "version must look like v1.2.3 or v1.2.3-rc.1" >&2
+            exit 1
+          fi
+
+      - name: Check out main
+        uses: actions/checkout@v7
+        with:
+          ref: main
+          fetch-depth: 1
+
+      - name: Record main revision
+        id: main-sha
+        shell: bash
+        run: echo "sha=$(git rev-parse HEAD)" >> "${GITHUB_OUTPUT}"
+
+      - name: Reject an existing release tag
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          if [[ -n "$(git ls-remote --tags origin "refs/tags/${RELEASE_VERSION}")" ]]; then
+            echo "tag ${RELEASE_VERSION} already exists; release assets are immutable in this workflow" >&2
+            exit 1
+          fi
+
+      - name: Check out Conntrack source
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.conntrack_ref }}
+          path: conntrack-source
+          fetch-depth: 1
+
+      - name: Record Conntrack revision
+        id: conntrack-sha
+        shell: bash
+        run: echo "sha=$(git -C conntrack-source rev-parse HEAD)" >> "${GITHUB_OUTPUT}"
+
+  build-ebpf:
+    name: Build eBPF exporter
+    needs: resolve-sources
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out pinned main revision
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.resolve-sources.outputs.main_sha }}
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+
+      - name: Install eBPF build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes bpftool clang libbpf-dev llvm
+
+      - name: Generate, build, and verify
+        env:
+          CGO_ENABLED: "0"
+          GOOS: linux
+          GOARCH: amd64
+        run: |
+          make build
+          go vet ./...
+          go test ./...
+          file ebpf-traffic-exporter
+
+      - name: Package eBPF exporter
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          mkdir -p dist/package
+          install -m 0755 ebpf-traffic-exporter dist/package/ebpf-traffic-exporter
+          tar -C dist/package -czf "dist/network-traffic-ebpf-exporter_${RELEASE_VERSION}_linux_amd64.tar.gz" ebpf-traffic-exporter
+
+      - name: Upload eBPF package
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-ebpf
+          path: dist/*.tar.gz
+          if-no-files-found: error
+          retention-days: 1
+
+  build-conntrack:
+    name: Build Conntrack exporter
+    needs: resolve-sources
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out pinned Conntrack revision
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.resolve-sources.outputs.conntrack_sha }}
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+
+      - name: Test and build
+        run: |
+          go vet ./...
+          go test ./...
+          go test -race ./...
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
+            -trimpath -ldflags="-s -w" \
+            -o conntrack-traffic-exporter ./cmd/exporter
+          file conntrack-traffic-exporter
+
+      - name: Package Conntrack exporter
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          mkdir -p dist/package
+          install -m 0755 conntrack-traffic-exporter dist/package/conntrack-traffic-exporter
+          tar -C dist/package -czf "dist/network-traffic-conntrack-exporter_${RELEASE_VERSION}_linux_amd64.tar.gz" conntrack-traffic-exporter
+
+      - name: Upload Conntrack package
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-conntrack
+          path: dist/*.tar.gz
+          if-no-files-found: error
+          retention-days: 1
+
+  publish-release:
+    name: Publish GitHub Release
+    needs:
+      - resolve-sources
+      - build-ebpf
+      - build-conntrack
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Download release packages
+        uses: actions/download-artifact@v7
+        with:
+          pattern: release-*
+          path: dist
+          merge-multiple: true
+
+      - name: Generate checksums and build manifest
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+          MAIN_SHA: ${{ needs.resolve-sources.outputs.main_sha }}
+          CONNTRACK_REF: ${{ inputs.conntrack_ref }}
+          CONNTRACK_SHA: ${{ needs.resolve-sources.outputs.conntrack_sha }}
+        run: |
+          jq -n \
+            --arg version "${RELEASE_VERSION}" \
+            --arg main_sha "${MAIN_SHA}" \
+            --arg conntrack_ref "${CONNTRACK_REF}" \
+            --arg conntrack_sha "${CONNTRACK_SHA}" \
+            '{
+              schema_version: 1,
+              version: $version,
+              release_tag_target: $main_sha,
+              variants: {
+                ebpf: {source_ref: "main", source_sha: $main_sha},
+                conntrack: {source_ref: $conntrack_ref, source_sha: $conntrack_sha}
+              }
+            }' > dist/release-manifest.json
+          (
+            cd dist
+            sha256sum ./*.tar.gz ./release-manifest.json > SHA256SUMS
+          )
+
+      - name: Publish release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_VERSION: ${{ inputs.version }}
+          MAIN_SHA: ${{ needs.resolve-sources.outputs.main_sha }}
+        run: |
+          notes="$(printf '%s\n' \
+            'This release contains two Linux/amd64 variants:' \
+            '- eBPF exporter for modern Linux kernels using TC hooks.' \
+            '- Conntrack exporter for legacy Linux endpoint hosts.' \
+            '' \
+            'Exact source revisions are recorded in release-manifest.json.')"
+          gh release create "${RELEASE_VERSION}" dist/* \
+            --target "${MAIN_SHA}" \
+            --title "${RELEASE_VERSION}" \
+            --notes "${notes}" \
+            --generate-notes

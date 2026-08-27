@@ -1,20 +1,11 @@
-CLANG ?= clang
-CFLAGS := -O2 -g -Wall -Werror $(CFLAGS)
-
-.PHONY: all
+.PHONY: all build test clean
 all: build
 
-.PHONY: build
-build: generate
-	go build -o ebpf-traffic-exporter cmd/exporter/main.go
+build:
+	CGO_ENABLED=0 go build -o conntrack-traffic-exporter ./cmd/exporter
 
-.PHONY: generate
-generate: vmlinux.h
-	go generate ./...
+test:
+	go test ./...
 
-vmlinux.h:
-	bpftool btf dump file /sys/kernel/btf/vmlinux format c > vmlinux.h
-
-.PHONY: clean
 clean:
-	rm -f ebpf-traffic-exporter vmlinux.h internal/ebpf/Bpf_bpfel.go internal/ebpf/Bpf_bpfeb.go internal/ebpf/Bpf_bpfel.o internal/ebpf/Bpf_bpfeb.o
+	rm -f conntrack-traffic-exporter

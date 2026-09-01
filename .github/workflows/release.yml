@@ -224,6 +224,7 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
           RELEASE_VERSION: ${{ inputs.version }}
           MAIN_SHA: ${{ needs.resolve-sources.outputs.main_sha }}
         run: |

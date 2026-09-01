@@ -1,4 +1,5 @@
 CLANG ?= clang
+BPFTOOL ?= bpftool
 CFLAGS := -O2 -g -Wall -Werror $(CFLAGS)
 
 .PHONY: all
@@ -13,7 +14,7 @@ generate: vmlinux.h
 	go generate ./...
 
 vmlinux.h:
-	bpftool btf dump file /sys/kernel/btf/vmlinux format c > vmlinux.h
+	$(BPFTOOL) btf dump file /sys/kernel/btf/vmlinux format c > vmlinux.h
 
 .PHONY: clean
 clean:

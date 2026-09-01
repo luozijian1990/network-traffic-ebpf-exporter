@@ -98,7 +98,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install --yes linux-tools-generic clang libbpf-dev llvm
-          bpftool_path="$(find /usr/lib/linux-tools -type f -name bpftool | sort -V | tail -n 1)"
+          bpftool_path="$(find /usr/lib/linux-tools -name bpftool | sort -V | tail -n 1)"
           test -n "${bpftool_path}"
           "${bpftool_path}" version
           echo "BPFTOOL=${bpftool_path}" >> "${GITHUB_ENV}"

@@ -60,7 +60,7 @@ Ubuntu/Debian 可安装以下构建依赖：
 ```bash
 sudo apt-get update
 sudo apt-get install -y linux-tools-generic clang libbpf-dev llvm make
-export BPFTOOL="$(find /usr/lib/linux-tools -type f -name bpftool | sort -V | tail -n 1)"
+export BPFTOOL="$(find /usr/lib/linux-tools -name bpftool | sort -V | tail -n 1)"
 test -n "${BPFTOOL}"
 ```
 

@@ -59,7 +59,7 @@ Ubuntu/Debian 可安装以下构建依赖：
 
 ```bash
 sudo apt-get update
-sudo apt-get install -y bpftool clang libbpf-dev llvm make
+sudo apt-get install -y linux-tools-common clang libbpf-dev llvm make
 ```
 
 > [!NOTE]

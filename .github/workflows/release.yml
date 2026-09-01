@@ -96,7 +96,7 @@ jobs:
       - name: Install eBPF build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install --yes linux-tools-common clang libbpf-dev llvm
+          sudo apt-get install --yes "linux-tools-$(uname -r)" clang libbpf-dev llvm
 
       - name: Generate, build, and verify
         env:

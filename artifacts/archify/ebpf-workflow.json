@@ -1,0 +1,299 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "eBPF 分支：启动、采集与 Prometheus 抓取",
+    "locale": "zh-CN",
+    "animation": "none",
+    "quality_profile": "showcase",
+    "views": [
+      {
+        "id": "startup-attachment",
+        "label": "启动挂载",
+        "focus": [
+          "start",
+          "load",
+          "attach"
+        ],
+        "note": "解析 --iface 与 --addr，加载 BPF objects，再创建 clsact 并挂载 ingress/egress filters。"
+      },
+      {
+        "id": "packet-update",
+        "label": "数据包计数",
+        "focus": [
+          "attach",
+          "packet",
+          "map"
+        ],
+        "note": "IPv4 数据包经过 TC handler，以 src_ip、dst_ip、direction 为键更新 traffic_stats。"
+      },
+      {
+        "id": "packet-guards",
+        "label": "跳过不支持的数据包",
+        "focus": [
+          "packet",
+          "skip"
+        ],
+        "note": "Ethernet/IP 头越界或非 IPv4 数据包直接返回 TC_ACT_OK，不统计也不阻断数据包。"
+      },
+      {
+        "id": "scrape-samples",
+        "label": "抓取与导出",
+        "focus": [
+          "map",
+          "scrape",
+          "collect",
+          "metrics",
+          "prom"
+        ],
+        "note": "Map 保存累计值，Prometheus 的 GET /metrics 独立触发 Collector 读取并返回样本；抓取本身不清空 Map。"
+      }
+    ],
+    "output": "artifacts/archify/ebpf-workflow.html"
+  },
+  "lanes": [
+    {
+      "id": "startup",
+      "label": "加载与挂载"
+    },
+    {
+      "id": "kernel",
+      "label": "内核数据包路径"
+    },
+    {
+      "id": "exporter",
+      "label": "指标抓取与展示"
+    }
+  ],
+  "phases": [
+    {
+      "id": "startup",
+      "label": "启动挂载",
+      "fromCol": 0,
+      "toCol": 1,
+      "variant": "emphasis"
+    },
+    {
+      "id": "packet",
+      "label": "数据包路径",
+      "fromCol": 2,
+      "toCol": 3
+    },
+    {
+      "id": "scrape",
+      "label": "抓取导出",
+      "fromCol": 4,
+      "toCol": 5,
+      "variant": "dashed"
+    }
+  ],
+  "groups": [
+    {
+      "id": "tc-hooks",
+      "label": "TC hooks",
+      "lane": "kernel",
+      "fromCol": 2,
+      "toCol": 4,
+      "variant": "emphasis"
+    },
+    {
+      "id": "metric-read",
+      "label": "Metric read path",
+      "lane": "exporter",
+      "fromCol": 3,
+      "toCol": 5,
+      "variant": "dashed"
+    }
+  ],
+  "mainPath": [
+    "start",
+    "load",
+    "attach",
+    "packet",
+    "map",
+    "collect",
+    "metrics",
+    "prom"
+  ],
+  "semanticChecks": {
+    "allowedRoots": [
+      "start",
+      "scrape"
+    ],
+    "allowedTerminals": [
+      "prom",
+      "skip"
+    ],
+    "requiredEdges": [
+      {
+        "from": "attach",
+        "to": "packet"
+      },
+      {
+        "from": "collect",
+        "to": "metrics"
+      }
+    ],
+    "requiredPaths": [
+      {
+        "from": "packet",
+        "to": "prom"
+      }
+    ]
+  },
+  "nodes": [
+    {
+      "id": "start",
+      "lane": "startup",
+      "col": 0,
+      "type": "external",
+      "label": "启动 exporter",
+      "sublabel": "--iface / --addr",
+      "width": 132
+    },
+    {
+      "id": "load",
+      "lane": "startup",
+      "col": 1,
+      "type": "backend",
+      "label": "LoadObjects",
+      "sublabel": "加载 BPF objects",
+      "width": 132
+    },
+    {
+      "id": "attach",
+      "lane": "startup",
+      "col": 2,
+      "type": "backend",
+      "label": "AttachTC",
+      "sublabel": "创建 clsact + filters",
+      "width": 132
+    },
+    {
+      "id": "packet",
+      "lane": "kernel",
+      "col": 2,
+      "type": "backend",
+      "label": "TC packet handler",
+      "sublabel": "解析 Ethernet / IPv4",
+      "width": 138
+    },
+    {
+      "id": "map",
+      "lane": "kernel",
+      "col": 3,
+      "type": "database",
+      "label": "traffic_stats map",
+      "sublabel": "按 src/dst/direction 累加",
+      "width": 138
+    },
+    {
+      "id": "scrape",
+      "lane": "exporter",
+      "col": 2,
+      "type": "external",
+      "label": "Prometheus scrape",
+      "sublabel": "GET /metrics",
+      "width": 138
+    },
+    {
+      "id": "collect",
+      "lane": "exporter",
+      "col": 3,
+      "type": "backend",
+      "label": "Collector.Collect",
+      "sublabel": "遍历 map + 补 ip_type",
+      "width": 138
+    },
+    {
+      "id": "metrics",
+      "lane": "exporter",
+      "col": 4,
+      "type": "backend",
+      "label": "Prometheus metric",
+      "sublabel": "network_traffic_bytes_total",
+      "width": 150
+    },
+    {
+      "id": "prom",
+      "lane": "exporter",
+      "col": 5,
+      "type": "external",
+      "label": "Prometheus / Grafana",
+      "sublabel": "查询与可视化",
+      "width": 150
+    },
+    {
+      "id": "skip",
+      "lane": "kernel",
+      "col": 4,
+      "type": "security",
+      "label": "非 IPv4 / 越界",
+      "sublabel": "TC_ACT_OK",
+      "width": 132
+    }
+  ],
+  "edges": [
+    {
+      "id": "start-load",
+      "from": "start",
+      "to": "load",
+      "label": "解析参数",
+      "variant": "emphasis"
+    },
+    {
+      "id": "load-attach",
+      "from": "load",
+      "to": "attach",
+      "label": "对象就绪"
+    },
+    {
+      "id": "attach-packet",
+      "from": "attach",
+      "to": "packet",
+      "label": "ingress + egress",
+      "variant": "emphasis"
+    },
+    {
+      "id": "packet-map",
+      "from": "packet",
+      "to": "map",
+      "label": "查找与更新"
+    },
+    {
+      "id": "packet-skip",
+      "from": "packet",
+      "to": "skip",
+      "label": "跳过统计",
+      "role": "branch",
+      "variant": "dashed"
+    },
+    {
+      "id": "map-collect",
+      "from": "map",
+      "to": "collect",
+      "label": "Iterate()",
+      "variant": "dashed"
+    },
+    {
+      "id": "scrape-collect",
+      "from": "scrape",
+      "to": "collect",
+      "label": "发起抓取"
+    },
+    {
+      "id": "collect-metrics",
+      "from": "collect",
+      "to": "metrics",
+      "label": "输出样本",
+      "variant": "emphasis"
+    },
+    {
+      "id": "metrics-prom",
+      "from": "metrics",
+      "to": "prom",
+      "label": "HTTP 响应",
+      "variant": "emphasis"
+    }
+  ]
+}

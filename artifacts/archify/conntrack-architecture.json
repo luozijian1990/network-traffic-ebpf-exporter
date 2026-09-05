@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "网络流量 Exporter — Conntrack 分支",
+    "locale": "zh-CN",
+    "quality_profile": "showcase",
+    "views": [
+      {"id":"dual-input","label":"转储与事件","focus":["kernel","dump","events","manager"],"note":"两个独立 Netlink socket 分别周期转储 IPv4 连接表、订阅 DESTROY 事件，以覆盖长连接和短连接尾部计数。"},
+      {"id":"baseline-delta","label":"基线与增量","focus":["manager","engine","http"],"note":"Engine 按连接基线计算增量并累加至 IP 聚合表；首次成功转储及转储 socket 重连后的首次成功转储只建立基线。"},
+      {"id":"snapshot-observability","label":"快照与看板","focus":["engine","http","prom","grafana"],"note":"/metrics 只读内存快照，不触发转储；Prometheus 与 Grafana 复用两个分支共有的流量指标。"}
+    ],
+    "output": "artifacts/archify/conntrack-architecture.html",
+    "repository": {
+      "url": "https://github.com/luozijian1990/network-traffic-ebpf-exporter",
+      "revision": "c92ca0868c962a4bdd15069f6d7952310adb6a50"
+    }
+  },
+  "components": [
+    {"id":"kernel","type":"cloud","label":"Linux Netfilter","sublabel":"Conntrack","pos":[30,250],"size":[170,72],"sources":[{"path":"internal/conntrack/manager.go","line":184,"end_line":193,"label":"Dump"}]},
+    {"id":"dump","type":"backend","label":"周期 Dump socket","sublabel":"30s snapshot","pos":[230,150],"size":[170,72],"sources":[{"path":"internal/conntrack/manager.go","line":152,"end_line":169,"label":"Run"}]},
+    {"id":"events","type":"messagebus","label":"DESTROY event socket","sublabel":"短连接尾部","pos":[230,360],"size":[170,72],"sources":[{"path":"internal/conntrack/manager.go","line":231,"end_line":247,"label":"Register"}]},
+    {"id":"manager","type":"backend","label":"Conntrack Manager","sublabel":"重连 + 健康","pos":[440,250],"size":[180,72],"sources":[{"path":"internal/conntrack/manager.go","line":65,"end_line":85,"label":"NewManager"}]},
+    {"id":"engine","type":"database","label":"Engine aggregate","sublabel":"baseline → delta → IP map","pos":[670,250],"size":[190,72],"sources":[{"path":"internal/conntrack/engine.go","line":67,"end_line":77,"label":"Engine"},{"path":"internal/conntrack/engine.go","line":100,"end_line":175,"label":"Process"}]},
+    {"id":"http","type":"backend","label":"Go HTTP exporter","sublabel":"/metrics + /healthz","pos":[900,250],"size":[180,72],"sources":[{"path":"cmd/exporter/main.go","line":65,"end_line":74,"label":"HTTP handlers"}]},
+    {"id":"prom","type":"external","label":"Prometheus","sublabel":"scrapes exporter","pos":[1140,160],"size":[170,72]},
+    {"id":"grafana","type":"external","label":"Grafana","sublabel":"shared dashboard","pos":[1140,350],"size":[170,72]}
+  ],
+  "boundaries": [
+    {"kind":"region","label":"Kernel data plane","wraps":["kernel"],"pad":28},
+    {"kind":"region","label":"User space collector","wraps":["dump","events","manager","engine","http"],"pad":28}
+  ],
+  "connections": [
+    {"id":"kernel-dump","from":"kernel","to":"dump","label":"IPv4 table dump","labelDy":13},
+    {"id":"kernel-events","from":"kernel","to":"events","label":"DESTROY multicast"},
+    {"id":"dump-manager","from":"dump","to":"manager","label":"connections[]","labelDy":13},
+    {"id":"events-manager","from":"events","to":"manager","label":"final counters"},
+    {"id":"manager-engine","from":"manager","to":"engine","label":"Process / ProcessDestroy","variant":"emphasis","labelDy":60},
+    {"id":"engine-http","from":"engine","to":"http","label":"Snapshot()","variant":"dashed","labelDy":60},
+    {"id":"http-prom","from":"http","to":"prom","label":"/metrics scrape","variant":"emphasis","labelDy":15},
+    {"id":"prom-grafana","from":"prom","to":"grafana","label":"PromQL","fromSide":"bottom","toSide":"top","route":"orthogonal-v"}
+  ]
+}

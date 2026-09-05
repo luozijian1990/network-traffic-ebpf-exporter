@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "网络流量 Exporter — eBPF 分支",
+    "locale": "zh-CN",
+    "quality_profile": "showcase",
+    "views": [
+      {"id":"packet-accounting","label":"数据包采集","focus":["nic","tc","bpf","map"],"note":"所选网卡的 TC ingress/egress 触发 eBPF，以源 IP、目标 IP 和方向为键累计 IPv4 数据包字节数。"},
+      {"id":"scrape-export","label":"指标导出","focus":["map","exporter","prometheus"],"note":"Prometheus 抓取 /metrics 时，Collector 遍历内核 Map，并根据 dst_ip 补充 ip_type 标签。"},
+      {"id":"dashboard-queries","label":"看板查询","focus":["exporter","prometheus","grafana"],"note":"Grafana 通过 Prometheus 查询 network_traffic_bytes_total，展示流量速率与 Top IP。"}
+    ],
+    "output": "artifacts/archify/ebpf-architecture.html",
+    "repository": {
+      "url": "https://github.com/luozijian1990/network-traffic-ebpf-exporter",
+      "revision": "a7eabcf12c8cf7b8dd5a24901142048c437079b5"
+    }
+  },
+  "components": [
+    {"id":"nic","type":"cloud","label":"Network Interface","sublabel":"eth0","pos":[40,260],"size":[170,68],"sources":[{"path":"internal/ebpf/loader.go","line":27,"label":"AttachTC"}]},
+    {"id":"tc","type":"backend","label":"TC ingress / egress","sublabel":"clsact filters","pos":[270,260],"size":[190,68],"sources":[{"path":"internal/ebpf/loader.go","line":34,"end_line":84,"label":"AttachTC"}]},
+    {"id":"bpf","type":"backend","label":"eBPF packet handler","sublabel":"IPv4 parse + direction","pos":[485,260],"size":[190,68],"sources":[{"path":"bpf/traffic.c","line":28,"end_line":67,"label":"handle_pkt"}]},
+    {"id":"map","type":"database","label":"traffic_stats Hash Map","sublabel":"10,240 aggregate keys","pos":[700,260],"size":[200,68],"sources":[{"path":"bpf/traffic.c","line":21,"end_line":26,"label":"BPF map"}]},
+    {"id":"exporter","type":"backend","label":"Go Exporter","sublabel":"collector + HTTP :9091","pos":[960,260],"size":[190,68],"sources":[{"path":"cmd/exporter/main.go","line":42,"end_line":49,"label":"collector / HTTP"},{"path":"internal/collector/collector.go","line":35,"end_line":62,"label":"Collect"}]},
+    {"id":"prometheus","type":"external","label":"Prometheus","sublabel":"scrapes /metrics","pos":[1180,180],"size":[170,68]},
+    {"id":"grafana","type":"external","label":"Grafana","sublabel":"PromQL dashboard","pos":[1180,360],"size":[170,68]}
+  ],
+  "boundaries": [
+    {"kind":"region","label":"Linux kernel / dataplane","wraps":["nic","tc","bpf","map"],"pad":28},
+    {"kind":"region","label":"User space","wraps":["exporter"],"pad":28}
+  ],
+  "connections": [
+    {"id":"nic-tc","from":"nic","to":"tc","label":"packet path","variant":"emphasis"},
+    {"id":"tc-bpf","from":"tc","to":"bpf","label":"skb + direction","labelDy":-28},
+    {"id":"bpf-map","from":"bpf","to":"map","label":"lookup / update","labelDy":-28},
+    {"id":"map-exporter","from":"map","to":"exporter","label":"iterate map","variant":"dashed","labelDy":58},
+    {"id":"exporter-prom","from":"exporter","to":"prometheus","label":"/metrics scrape","variant":"emphasis","labelAt":[1160,342]},
+    {"id":"prom-grafana","from":"prometheus","to":"grafana","label":"PromQL","fromSide":"bottom","toSide":"top","route":"orthogonal-v"}
+  ]
+}

@@ -1,0 +1,339 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "Conntrack 分支：转储、事件补齐与健康检查",
+    "locale": "zh-CN",
+    "animation": "none",
+    "quality_profile": "showcase",
+    "views": [
+      {
+        "id": "startup-baseline",
+        "label": "启动与基线",
+        "focus": [
+          "start",
+          "checks",
+          "baseline"
+        ],
+        "note": "检查参数、acct/events 配置及接口 IPv4 地址；首次成功转储只建立基线，不计入启动前的历史字节。"
+      },
+      {
+        "id": "counter-deltas",
+        "label": "增量与事件补齐",
+        "focus": [
+          "dump",
+          "destroy",
+          "delta",
+          "aggregate"
+        ],
+        "note": "周期转储与 DESTROY 是两条输入路径；Engine 处理计数差值、重置与去重，将有效流量累加至 IP 聚合表。"
+      },
+      {
+        "id": "memory-scrape",
+        "label": "快照导出",
+        "focus": [
+          "aggregate",
+          "snapshot",
+          "metrics",
+          "prom"
+        ],
+        "note": "Prometheus 抓取时只读取内存快照。Collector 按 dst_ip 补充 ip_type，并输出 network_traffic_bytes_total。"
+      },
+      {
+        "id": "recovery-health",
+        "label": "重连与健康检查",
+        "focus": [
+          "dump",
+          "retry",
+          "metrics",
+          "health"
+        ],
+        "note": "连续三次转储失败触发 socket 重连并重建基线；/healthz 在转储过期或事件监听断开时返回 503。"
+      }
+    ],
+    "output": "artifacts/archify/conntrack-workflow.html"
+  },
+  "lanes": [
+    {
+      "id": "startup",
+      "label": "初始化与运行状态"
+    },
+    {
+      "id": "kernel",
+      "label": "转储、事件与流量聚合"
+    },
+    {
+      "id": "http",
+      "label": "快照抓取与展示"
+    }
+  ],
+  "phases": [
+    {
+      "id": "init",
+      "label": "初始化基线",
+      "fromCol": 0,
+      "toCol": 1,
+      "variant": "emphasis"
+    },
+    {
+      "id": "process",
+      "label": "持续处理",
+      "fromCol": 2,
+      "toCol": 4
+    },
+    {
+      "id": "observe",
+      "label": "导出与健康",
+      "fromCol": 5,
+      "toCol": 5,
+      "variant": "dashed"
+    }
+  ],
+  "groups": [
+    {
+      "id": "dual-input",
+      "label": "Two input paths",
+      "lane": "kernel",
+      "fromCol": 2,
+      "toCol": 3,
+      "variant": "emphasis"
+    },
+    {
+      "id": "reconnect",
+      "label": "Bounded retry",
+      "lane": "startup",
+      "fromCol": 4,
+      "toCol": 5,
+      "variant": "security"
+    }
+  ],
+  "mainPath": [
+    "start",
+    "checks",
+    "baseline",
+    "dump",
+    "delta",
+    "aggregate"
+  ],
+  "semanticChecks": {
+    "allowedRoots": [
+      "start",
+      "destroy"
+    ],
+    "allowedTerminals": [
+      "prom",
+      "health",
+      "retry"
+    ],
+    "requiredEdges": [
+      {
+        "from": "checks",
+        "to": "baseline"
+      },
+      {
+        "from": "delta",
+        "to": "aggregate"
+      }
+    ],
+    "requiredPaths": [
+      {
+        "from": "destroy",
+        "to": "aggregate"
+      },
+      {
+        "from": "dump",
+        "to": "metrics"
+      }
+    ]
+  },
+  "nodes": [
+    {
+      "id": "start",
+      "lane": "startup",
+      "col": 0,
+      "type": "external",
+      "label": "启动 exporter",
+      "sublabel": "参数与权限",
+      "width": 132
+    },
+    {
+      "id": "checks",
+      "lane": "startup",
+      "col": 1,
+      "type": "security",
+      "label": "检查 sysctl + iface",
+      "sublabel": "acct / events / IPv4",
+      "width": 144
+    },
+    {
+      "id": "baseline",
+      "lane": "startup",
+      "col": 2,
+      "type": "backend",
+      "label": "建立初始基线",
+      "sublabel": "首次 dump 不计历史流量",
+      "width": 144
+    },
+    {
+      "id": "dump",
+      "lane": "kernel",
+      "col": 3,
+      "type": "cloud",
+      "label": "周期 IPv4 dump",
+      "sublabel": "每 30s 读取连接表",
+      "width": 144
+    },
+    {
+      "id": "destroy",
+      "lane": "kernel",
+      "col": 2,
+      "type": "messagebus",
+      "label": "DESTROY event",
+      "sublabel": "补齐短连接尾部",
+      "width": 144
+    },
+    {
+      "id": "delta",
+      "lane": "kernel",
+      "col": 4,
+      "type": "backend",
+      "label": "Engine delta",
+      "sublabel": "计数差值 + 重置处理",
+      "width": 144
+    },
+    {
+      "id": "aggregate",
+      "lane": "kernel",
+      "col": 5,
+      "type": "database",
+      "label": "IP aggregate",
+      "sublabel": "direction + ip_type",
+      "width": 144
+    },
+    {
+      "id": "snapshot",
+      "lane": "http",
+      "col": 3,
+      "type": "backend",
+      "label": "Snapshot()",
+      "sublabel": "内存快照，不触发 dump",
+      "width": 144
+    },
+    {
+      "id": "metrics",
+      "lane": "http",
+      "col": 4,
+      "type": "backend",
+      "label": "/metrics + /healthz",
+      "sublabel": "指标与 freshness",
+      "width": 156
+    },
+    {
+      "id": "prom",
+      "lane": "http",
+      "col": 5,
+      "type": "external",
+      "label": "Prometheus / Grafana",
+      "sublabel": "查询与可视化",
+      "width": 156
+    },
+    {
+      "id": "retry",
+      "lane": "startup",
+      "col": 4,
+      "type": "security",
+      "label": "失败 ≥ 3 次",
+      "sublabel": "重建 socket + baseline",
+      "width": 144
+    },
+    {
+      "id": "health",
+      "lane": "startup",
+      "col": 5,
+      "type": "external",
+      "label": "503 / retry",
+      "sublabel": "event disconnected 或 stale",
+      "width": 144
+    }
+  ],
+  "edges": [
+    {
+      "id": "start-checks",
+      "from": "start",
+      "to": "checks",
+      "label": "检查配置",
+      "variant": "emphasis"
+    },
+    {
+      "id": "checks-baseline",
+      "from": "checks",
+      "to": "baseline",
+      "label": "ready"
+    },
+    {
+      "id": "baseline-dump",
+      "from": "baseline",
+      "to": "dump",
+      "label": "start ticker",
+      "variant": "emphasis"
+    },
+    {
+      "id": "dump-delta",
+      "from": "dump",
+      "to": "delta",
+      "label": "connections[]"
+    },
+    {
+      "id": "destroy-delta",
+      "from": "destroy",
+      "to": "delta",
+      "label": "final counters",
+      "variant": "dashed"
+    },
+    {
+      "id": "delta-aggregate",
+      "from": "delta",
+      "to": "aggregate",
+      "label": "add delta bytes",
+      "variant": "emphasis"
+    },
+    {
+      "id": "aggregate-snapshot",
+      "from": "aggregate",
+      "to": "snapshot",
+      "label": "read lock",
+      "variant": "dashed",
+      "route": "drop",
+      "channelY": 320
+    },
+    {
+      "id": "snapshot-metrics",
+      "from": "snapshot",
+      "to": "metrics",
+      "label": "emit samples",
+      "variant": "emphasis"
+    },
+    {
+      "id": "metrics-prom",
+      "from": "metrics",
+      "to": "prom",
+      "label": "scrape response",
+      "variant": "emphasis"
+    },
+    {
+      "id": "dump-retry",
+      "from": "dump",
+      "to": "retry",
+      "label": "consecutive failures",
+      "role": "error"
+    },
+    {
+      "id": "metrics-health",
+      "from": "metrics",
+      "to": "health",
+      "label": "stale / disconnected",
+      "role": "error",
+      "variant": "security"
+    }
+  ]
+}

@@ -211,6 +211,8 @@ Conntrack 字节数是连接生命周期累计值。Exporter 为每个连接保�
 
 周期转储负责更新长连接，独立的 `DESTROY` 事件监听负责补齐关闭时的最终计数，也能统计完全发生在两次转储之间的短连接。连续三次转储失败后，Exporter 会重建 Netlink socket，并以 1 秒至 30 秒的有界退避重试。
 
+连接从转储中消失后，其基线会保留到最终 `DESTROY` 事件到达，以处理延迟事件；匹配通过元组与连接 ID 索引完成。未确认的消失连接最多保留 65536 条。超过上限时，Exporter 保留已导出的累计值并重新建立基线，避免重复计数；此恢复窗口可能漏计，`network_conntrack_skipped_connections_total{reason="history_capacity_rebaseline"}` 会增加。
+
 `/healthz` 在以下条件同时满足时返回 `200`：
 
 - 已成功完成过 Conntrack 转储；

@@ -72,12 +72,12 @@ func TestCounterResetUsesCurrentWithoutUnderflow(t *testing.T) {
 func TestDisappearedConnectionIsEvicted(t *testing.T) {
 	engine := NewEngine(map[uint32]struct{}{mustIP(t, "10.0.0.1"): {}}, 10240)
 	engine.Process([]nfconntrack.Con{connection(t, 10, 100, 100, "10.0.0.1", "8.8.8.8")})
-	if len(engine.previous) != 1 {
-		t.Fatalf("previous entries = %d, want 1", len(engine.previous))
+	if engine.previous.count != 1 {
+		t.Fatalf("previous entries = %d, want 1", engine.previous.count)
 	}
 	engine.Process(nil)
-	if len(engine.previous) != 0 {
-		t.Fatalf("previous entries = %d after disappearance, want 0", len(engine.previous))
+	if engine.previous.count != 0 {
+		t.Fatalf("previous entries = %d after disappearance, want 0", engine.previous.count)
 	}
 }
 

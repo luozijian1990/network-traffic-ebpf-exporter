@@ -67,9 +67,9 @@ type ProcessStats struct {
 type Engine struct {
 	mu          sync.RWMutex
 	localIPs    map[uint32]struct{}
-	previous    map[connKey]connCounters
-	retired     map[connKey]retainedCounters
-	destroyed   map[connKey]retainedCounters
+	previous    *connectionTable[connCounters]
+	retired     *connectionTable[retainedCounters]
+	destroyed   *connectionTable[retainedCounters]
 	aggregate   map[TrafficKey]uint64
 	maxEntries  int
 	generation  uint64
@@ -82,17 +82,17 @@ func NewEngine(localIPs map[uint32]struct{}, maxEntries int) *Engine {
 		copyIPs[ip] = struct{}{}
 	}
 	return &Engine{
-		localIPs: copyIPs, previous: make(map[connKey]connCounters),
-		retired: make(map[connKey]retainedCounters), destroyed: make(map[connKey]retainedCounters),
+		localIPs: copyIPs, previous: newConnectionTable[connCounters](),
+		retired: newConnectionTable[retainedCounters](), destroyed: newConnectionTable[retainedCounters](),
 		aggregate: make(map[TrafficKey]uint64), maxEntries: maxEntries,
 	}
 }
 
 func (e *Engine) RequireBaseline() {
 	e.mu.Lock()
-	e.previous = make(map[connKey]connCounters)
-	e.retired = make(map[connKey]retainedCounters)
-	e.destroyed = make(map[connKey]retainedCounters)
+	e.previous = newConnectionTable[connCounters]()
+	e.retired = newConnectionTable[retainedCounters]()
+	e.destroyed = newConnectionTable[retainedCounters]()
 	e.initialized = false
 	e.mu.Unlock()
 }
@@ -102,7 +102,7 @@ func (e *Engine) Process(connections []nfconntrack.Con) ProcessStats {
 	defer e.mu.Unlock()
 	e.generation++
 	stats := ProcessStats{Skipped: make(map[string]uint64)}
-	nextPrevious := make(map[connKey]connCounters, len(connections))
+	nextPrevious := newConnectionTable[connCounters]()
 	for i := range connections {
 		key, origin, reply, counters, reason := parseConnection(&connections[i])
 		if reason != "" {
@@ -120,20 +120,20 @@ func (e *Engine) Process(connections []nfconntrack.Con) ProcessStats {
 		if originReason != "" && replyReason != "" {
 			continue
 		}
-		if destroyedKey, destroyed, exists := findRetained(e.destroyed, key); exists {
+		if destroyedKey, destroyed, exists := e.destroyed.find(key); exists {
 			if countersAtOrBelow(counters, destroyed.counters) {
 				continue
 			}
-			delete(e.destroyed, destroyedKey)
+			e.destroyed.remove(destroyedKey)
 		}
-		nextPrevious[key] = counters
+		nextPrevious.set(key, counters)
 		if !e.initialized {
 			continue
 		}
-		previousKey, previous, existed := findCounters(e.previous, key)
+		previousKey, previous, existed := e.previous.find(key)
 		var retiredKey connKey
 		if !existed {
-			if matchedKey, retained, ok := findRetained(e.retired, key); ok {
+			if matchedKey, retained, ok := e.retired.find(key); ok {
 				retiredKey, previous, existed = matchedKey, retained.counters, true
 			}
 		}
@@ -152,25 +152,28 @@ func (e *Engine) Process(connections []nfconntrack.Con) ProcessStats {
 			e.addTraffic(reply, replyDirection, replyDelta, &stats)
 		}
 		if previousKey != (connKey{}) {
-			delete(e.previous, previousKey)
+			e.previous.remove(previousKey)
 		}
 		if retiredKey != (connKey{}) {
-			delete(e.retired, retiredKey)
+			e.retired.remove(retiredKey)
 		}
 	}
-	for key, counters := range e.previous {
-		if _, stillPresent := nextPrevious[key]; stillPresent {
-			continue
+	e.previous.each(func(key connKey, counters connCounters) {
+		if _, stillPresent := nextPrevious.exact(key); stillPresent {
+			return
 		}
-		if _, wasDestroyed := e.destroyed[key]; wasDestroyed {
-			continue
+		if _, wasDestroyed := e.destroyed.exact(key); wasDestroyed {
+			return
 		}
-		e.retired[key] = retainedCounters{counters: counters, expires: e.generation + 2}
-	}
+		e.retired.set(key, retainedCounters{counters: counters})
+	})
 	e.previous = nextPrevious
 	e.initialized = true
 	e.expireRetained()
-	stats.PreviousEntries = len(e.previous) + len(e.retired)
+	if !e.initialized {
+		stats.Skipped["history_capacity_rebaseline"]++
+	}
+	stats.PreviousEntries = e.previous.count + e.retired.count
 	stats.AggregateEntries = len(e.aggregate)
 	return stats
 }
@@ -201,17 +204,17 @@ func (e *Engine) ProcessDestroy(connection nfconntrack.Con) ProcessStats {
 	if originReason != "" && replyReason != "" {
 		return e.finishStats(stats)
 	}
-	if destroyedKey, destroyed, exists := findRetained(e.destroyed, key); exists {
+	if destroyedKey, destroyed, exists := e.destroyed.find(key); exists {
 		if counters == destroyed.counters {
 			stats.Skipped["duplicate_destroy"]++
 			return e.finishStats(stats)
 		}
-		delete(e.destroyed, destroyedKey)
+		e.destroyed.remove(destroyedKey)
 	}
-	previousKey, previous, existed := findCounters(e.previous, key)
+	previousKey, previous, existed := e.previous.find(key)
 	var retiredKey connKey
 	if !existed {
-		if matchedKey, retained, ok := findRetained(e.retired, key); ok {
+		if matchedKey, retained, ok := e.retired.find(key); ok {
 			retiredKey, previous, existed = matchedKey, retained.counters, true
 		}
 	}
@@ -230,33 +233,35 @@ func (e *Engine) ProcessDestroy(connection nfconntrack.Con) ProcessStats {
 		e.addTraffic(reply, replyDirection, replyDelta, &stats)
 	}
 	if previousKey != (connKey{}) {
-		delete(e.previous, previousKey)
+		e.previous.remove(previousKey)
 	}
 	if retiredKey != (connKey{}) {
-		delete(e.retired, retiredKey)
+		e.retired.remove(retiredKey)
 	}
-	delete(e.previous, key)
-	delete(e.retired, key)
-	e.destroyed[key] = retainedCounters{counters: counters, expires: e.generation + 2}
+	e.previous.remove(key)
+	e.retired.remove(key)
+	e.destroyed.set(key, retainedCounters{counters: counters, expires: e.generation + 2})
 	return e.finishStats(stats)
 }
 
 func (e *Engine) finishStats(stats ProcessStats) ProcessStats {
-	stats.PreviousEntries = len(e.previous) + len(e.retired)
+	stats.PreviousEntries = e.previous.count + e.retired.count
 	stats.AggregateEntries = len(e.aggregate)
 	return stats
 }
 
 func (e *Engine) expireRetained() {
-	for key, retained := range e.retired {
+	e.destroyed.each(func(key connKey, retained retainedCounters) {
 		if retained.expires <= e.generation {
-			delete(e.retired, key)
+			e.destroyed.remove(key)
 		}
-	}
-	for key, retained := range e.destroyed {
-		if retained.expires <= e.generation {
-			delete(e.destroyed, key)
-		}
+	})
+	if e.retired.count > maxRetiredBaselines {
+		// Preserve exported totals but avoid double-counting evicted lifetimes.
+		e.previous = newConnectionTable[connCounters]()
+		e.retired = newConnectionTable[retainedCounters]()
+		e.destroyed = newConnectionTable[retainedCounters]()
+		e.initialized = false
 	}
 }
 
@@ -295,53 +300,6 @@ func counterDelta(current, previous uint64, existed bool) (uint64, bool) {
 
 func countersAtOrBelow(current, final connCounters) bool {
 	return current.Origin <= final.Origin && current.Reply <= final.Reply
-}
-
-func findCounters(values map[connKey]connCounters, key connKey) (connKey, connCounters, bool) {
-	if value, exists := values[key]; exists {
-		return key, value, true
-	}
-	var matchedKey connKey
-	var matched connCounters
-	found := false
-	for candidate, value := range values {
-		if !matchesWithoutOptionalID(candidate, key) {
-			continue
-		}
-		if found {
-			return connKey{}, connCounters{}, false
-		}
-		matchedKey, matched, found = candidate, value, true
-	}
-	return matchedKey, matched, found
-}
-
-func findRetained(values map[connKey]retainedCounters, key connKey) (connKey, retainedCounters, bool) {
-	if value, exists := values[key]; exists {
-		return key, value, true
-	}
-	var matchedKey connKey
-	var matched retainedCounters
-	found := false
-	for candidate, value := range values {
-		if !matchesWithoutOptionalID(candidate, key) {
-			continue
-		}
-		if found {
-			return connKey{}, retainedCounters{}, false
-		}
-		matchedKey, matched, found = candidate, value, true
-	}
-	return matchedKey, matched, found
-}
-
-func matchesWithoutOptionalID(a, b connKey) bool {
-	if a.ID != 0 && b.ID != 0 {
-		return false
-	}
-	a.ID = 0
-	b.ID = 0
-	return a == b
 }
 
 func classify(src, dst uint32, localIPs map[uint32]struct{}) (Direction, string) {

@@ -4,7 +4,7 @@
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_endian.h>
 
-#define TC_ACT_OK 0
+#define TC_ACT_UNSPEC (-1)
 #define ETH_P_IP 0x0800
 
 struct key_t {
@@ -31,14 +31,14 @@ static __always_inline int handle_pkt(struct __sk_buff *skb, u32 direction) {
     struct ethhdr *eth = data;
 
     if ((void *)(eth + 1) > data_end)
-        return TC_ACT_OK;
+        return TC_ACT_UNSPEC;
 
     if (eth->h_proto != bpf_htons(ETH_P_IP))
-        return TC_ACT_OK;
+        return TC_ACT_UNSPEC;
 
     struct iphdr *ip = (void *)(eth + 1);
     if ((void *)(ip + 1) > data_end)
-        return TC_ACT_OK;
+        return TC_ACT_UNSPEC;
 
     struct key_t key = {};
     key.src_ip = ip->saddr;
@@ -46,15 +46,20 @@ static __always_inline int handle_pkt(struct __sk_buff *skb, u32 direction) {
     key.direction = direction;
 
     struct value_t *val = bpf_map_lookup_elem(&traffic_stats, &key);
+    if (!val) {
+        // Concurrent creators must not overwrite a counter another CPU has
+        // already started updating. Only the winner inserts zero counters.
+        struct value_t new_val = {};
+        bpf_map_update_elem(&traffic_stats, &key, &new_val, BPF_NOEXIST);
+        val = bpf_map_lookup_elem(&traffic_stats, &key);
+    }
     if (val) {
         __sync_fetch_and_add(&val->packets, 1);
         __sync_fetch_and_add(&val->bytes, skb->len);
-    } else {
-        struct value_t new_val = {1, skb->len};
-        bpf_map_update_elem(&traffic_stats, &key, &new_val, BPF_ANY);
     }
 
-    return TC_ACT_OK;
+    // Observe without terminating other classifiers on the shared interface.
+    return TC_ACT_UNSPEC;
 }
 
 SEC("tc")

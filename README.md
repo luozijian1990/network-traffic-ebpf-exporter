@@ -113,6 +113,8 @@ curl http://localhost:9091/metrics
 
 程序收到 `SIGINT` 或 `SIGTERM` 时会退出并删除它创建的 ingress/egress filter。
 
+Exporter 使用明确的 TC 优先级挂在已有 filter 之前，并返回 `TC_ACT_UNSPEC` 继续执行后续分类器；不替换已有 filter。若无法取得更靠前的空闲优先级，启动会失败。清理只删除本进程创建的 filter，保留共享 clsact qdisc；部分挂载失败会回滚，清理错误会明确返回。HTTP 地址在挂载前绑定，端口冲突不会遗留 TC 程序。
+
 ## Prometheus 指标
 
 核心指标是 eBPF 程序加载期间持续累加的计数器：
